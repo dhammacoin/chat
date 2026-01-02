@@ -1,30 +1,37 @@
-FROM golang:1.21 AS builder
+# --- Этап сборки ---
+FROM golang:1.21-alpine AS builder
+
+# Устанавливаем зависимости для сборки
+RUN apk add --no-cache git gcc musl-dev
+
 WORKDIR /app
 
-# Копируем исходники сервера внутрь контейнера
-COPY server/ .
+# Клонируем официальный репозиторий Tinode
+RUN git clone https://github.com/tinode/chat.git .
 
-# Собираем бинарник
-RUN go build -o tinode ./cmd/tinode
+# Собираем сервер и утилиту инициализации базы
+RUN go build -o tinode-server cmd/server/main.go
+RUN go build -o init-db cmd/init-db/main.go
 
-# --- Финальный слой ---
-FROM debian:bullseye-slim
-WORKDIR /opt/tinode
+# --- Этап запуска ---
+FROM alpine:3.18
 
-COPY --from=builder /app/tinode .
+WORKDIR /app
 
-RUN apt-get update && apt-get install -y ca-certificates bash netcat && rm -rf /var/lib/apt/lists/*
+# Копируем бинарники и ресурсы
+COPY --from=builder /app/tinode-server .
+COPY --from=builder /app/init-db .
+COPY --from=builder /app/server/templ/ ./templ/
+COPY --from=builder /app/server/static/ ./static/
+COPY --from=builder /app/scripts/data/ ./data/
 
-COPY config.template .
+# Конфиг и скрипт запуска
+COPY config.template ./tinode.conf
 COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
-RUN mkdir -p /botdata
-RUN chmod +x entrypoint.sh credentials.sh
+# Открываем порт Tinode
+EXPOSE 6060
 
-ENV POSTGRES_DSN='postgresql://postgres:4CH3Pr10KPimWLvM@db.gvissfiwgzjbhqyflfcm.supabase.co:5432/postgres?sslmode=require&connect_timeout=10'
-
-HEALTHCHECK --interval=1m --timeout=3s --start-period=30s \
-  CMD nc -z localhost 6060 || exit 1
-
-ENTRYPOINT ["./entrypoint.sh"]
-EXPOSE 6060 16060 12000-12003
+# Команда запуска
+CMD ["./entrypoint.sh"]
