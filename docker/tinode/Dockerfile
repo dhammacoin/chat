@@ -1,37 +1,31 @@
-# --- Этап сборки ---
+# Корневой Dockerfile
 FROM golang:1.21-alpine AS builder
-
-# Устанавливаем зависимости для сборки
-RUN apk add --no-cache git gcc musl-dev
 
 WORKDIR /app
 
-# Клонируем официальный репозиторий Tinode
-RUN git clone https://github.com/tinode/chat.git .
+# Копируем только tinode
+COPY tinode/ ./tinode
 
-# Собираем сервер и утилиту инициализации базы
+WORKDIR /app/tinode
+
+RUN apk add --no-cache git gcc musl-dev
+RUN go mod download
+
+# Сборка Tinode
 RUN go build -o tinode-server cmd/server/main.go
 RUN go build -o init-db cmd/init-db/main.go
 
 # --- Этап запуска ---
 FROM alpine:3.18
-
 WORKDIR /app
-
-# Копируем бинарники и ресурсы
-COPY --from=builder /app/tinode-server .
-COPY --from=builder /app/init-db .
-COPY --from=builder /app/server/templ/ ./templ/
-COPY --from=builder /app/server/static/ ./static/
-COPY --from=builder /app/scripts/data/ ./data/
-
-# Конфиг и скрипт запуска
-COPY config.template ./tinode.conf
-COPY entrypoint.sh .
+COPY --from=builder /app/tinode/tinode-server .
+COPY --from=builder /app/tinode/init-db .
+COPY --from=builder /app/tinode/templ/ ./templ/
+COPY --from=builder /app/tinode/static/ ./static/
+COPY --from=builder /app/tinode/data/ ./data/
+COPY --from=builder /app/tinode/tinode.conf .
+COPY --from=builder /app/tinode/entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
-# Открываем порт Tinode
 EXPOSE 6060
-
-# Команда запуска
 CMD ["./entrypoint.sh"]
