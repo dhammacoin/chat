@@ -1,19 +1,46 @@
-# Dockerfile для Tinode Chat Server
-# Скопировано и адаптировано из официального репозитория Tinode
+# Dockerfile для Tinode Chat Server (PostgreSQL + Supabase)
+# Рабочая версия без устаревших ссылок
 
-FROM alpine:3.22
+FROM golang:1.21 AS builder
 
-ARG VERSION=0.25
-ENV VERSION=$VERSION
-ARG BINVERS=$VERSION
+# Рабочая директория для сборки
+WORKDIR /app
 
-LABEL maintainer="Tinode Team <info@tinode.co>"
-LABEL name="TinodeChatServer"
-LABEL version=$VERSION
+# Клонируем Tinode сервер
+RUN git clone https://github.com/tinode/server.git .
 
-# Database selector для PostgreSQL
-ARG TARGET_DB=postgres
-ENV TARGET_DB=$TARGET_DB
+# Собираем бинарник для PostgreSQL
+RUN go build -o tinode ./cmd/tinode
+
+# --- Финальный слой ---
+FROM debian:bullseye-slim
+
+WORKDIR /opt/tinode
+
+# Копируем собранный бинарник
+COPY --from=builder /app/tinode .
+
+# Устанавливаем необходимые зависимости
+RUN apt-get update && \
+    apt-get install -y ca-certificates bash netcat && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy config template and entrypoint
+COPY config.template .
+COPY entrypoint.sh .
+
+# Создаём директории для данных
+RUN mkdir -p /botdata
+
+# Делаем скрипты исполняемыми
+RUN chmod +x entrypoint.sh credentials.sh
+
+# ENV переменные (Supabase + Tinode)
+ENV VERSION=0.25
+ENV TARGET_DB=postgres
+
+# Supabase/PostgreSQL
+ENV POSTGRES_DSN='postgresql://postgres:4CH3Pr10KPimWLvM@db.gvissfiwgzjbhqyflfcm.supabase.co:5432/postgres?sslmode=require&connect_timeout=10'
 
 # Runtime options
 ENV WAIT_FOR=
@@ -22,9 +49,6 @@ ENV UPGRADE_DB=false
 ENV NO_DB_INIT=false
 ENV SAMPLE_DATA=data.json
 ENV DEFAULT_COUNTRY_CODE=US
-
-# PostgreSQL DSN (Supabase)
-ENV POSTGRES_DSN='postgresql://postgres:postgres@localhost:5432/tinode?sslmode=disable&connect_timeout=10'
 
 # Chatbot plugin
 ENV PLUGIN_PYTHON_CHAT_BOT_ENABLED=false
@@ -46,7 +70,7 @@ ENV EMAIL_VERIFICATION_REQUIRED=
 ENV DEBUG_EMAIL_VERIFICATION_CODE=
 ENV SMTP_DOMAINS=''
 
-# Encryption keys (замени на свои в продакшене!)
+# Encryption keys (замени на свои!)
 ENV API_KEY_SALT=T713/rYYgW7g4m3vG6zGRh7+FM1t0T8j13koXScOAj4=
 ENV AUTH_TOKEN_KEY=wfaY2RgF2S1OQI/ZlK+LSrp1KB2jwAdGAIHQ7JZn+Kc=
 ENV UID_ENCRYPTION_KEY=la6YsO+bNX/+XIkOqc5Svw==
@@ -83,30 +107,6 @@ ENV SERVER_STATUS_PATH=''
 
 # Account garbage collection
 ENV ACC_GC_ENABLED=false
-
-# Install dependencies
-RUN apk update && \
-	apk add --no-cache ca-certificates bash grep
-
-WORKDIR /opt/tinode
-
-# Copy config template and entrypoint
-COPY config.template .
-COPY entrypoint.sh .
-
-# Download Tinode build для PostgreSQL
-ADD https://github.com/tinode/chat/releases/download/v$BINVERS/tinode-$TARGET_DB.linux-amd64.tar.gz .
-
-# Unpack archive
-RUN tar -xzf tinode-$TARGET_DB.linux-amd64.tar.gz && \
-	rm tinode-$TARGET_DB.linux-amd64.tar.gz
-
-# Create directory for chatbot data
-RUN mkdir -p /botdata
-
-# Make scripts executable
-RUN chmod +x entrypoint.sh && \
-	chmod +x credentials.sh
 
 # Healthcheck
 HEALTHCHECK --interval=1m --timeout=3s --start-period=30s \
